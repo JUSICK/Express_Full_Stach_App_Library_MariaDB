@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Books Library</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; }
+        .section { background: #f4f4f4; padding: 20px; margin-bottom: 20px; border-radius: 8px; }
+        input, select, button { padding: 8px; margin: 5px 0; }
+        .book-card { background: white; border: 1px solid #ddd; padding: 10px; margin-top: 10px; }
+        .account { background: #ff4444; color: white; border: none; cursor: pointer; float: right; }
+    </style>
+</head>
+<body>
+
+    <button class="account" onclick="returnac()">Return to Account</button>
+    <h1>Library Dashboard</h1>
+
+    <div class="section">
+        <h2>Add a New Book</h2>
+        <input type="text" id="add-title" placeholder="Book Title (Required)" required>
+        <input type="text" id="add-author" placeholder="Author (Required)" required>
+        <input type="number" id="add-year" placeholder="Year">
+        <input type="text" id="add-genre" placeholder="Genre">
+        <button onclick="addBook()">Add Book</button>
+        <p id="add-message" style="color: green;"></p>
+    </div>
+
+    <div class="section">
+        <h2>Manage Books</h2>
+        <input type="number" id="manage-book-id" placeholder="Enter Book ID">
+        <div id="extra-input"></div>
+        <select id="action-filter">
+            <option value="borrow">Borrow</option>
+            <option value="return">Return</option>
+            <option value="delete">Delete</option>
+            <option value="share">Share</option>
+        </select>
+        
+        <button onclick="doBooks()">Apply</button>
+        <p id="manage-message"></p>
+    </div>
+
+    <div class="section">
+        <h2>Shared Books</h2>
+        <div id="sharedbooks-container">
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Search Books</h2>
+        <input type="text" id="search-term" placeholder="Search title or author...">
+        <select id="availability-filter">
+            <option value="">All Books</option>
+            <option value="true">Available Only</option>
+            <option value="false">Unavailable Only</option>
+        </select>
+        <button onclick="fetchBooks()">Search</button>
+    </div>
+
+    <div id="books-container">
+        </div>
+
+    <script>
+    document.addEventListener("DOMContentLoaded", async function()
+    {
+
+        const isloggedin = await fetch('/api/me', {
+            method: 'GET',
+            credentials: 'include'
+        });
+
+        if(!isloggedin.ok){
+            window.location.href ="/login";
+        }
+    });
+
+    document.getElementById("action-filter").addEventListener("change", function () {
+    const extra = document.getElementById("extra-input");
+    extra.innerHTML = ""; 
+
+    if (this.value === "share") {
+        const input = document.createElement("input");
+        const select = document.createElement("select");
+
+        input.type = "text";
+        input.id = "share-user";
+        input.type = "number";
+        input.placeholder = "Enter ID to share with";
+
+        select.id = "share-permission";
+
+        const optRead = document.createElement("option");
+        optRead.value = "read";
+        optRead.textContent = "Read";
+
+        const optWrite = document.createElement("option");
+        optWrite.value = "write";
+        optWrite.textContent = "Write";
+       
+        select.appendChild(optRead);
+        select.appendChild(optWrite);
+       
+
+        extra.appendChild(input);
+        extra.appendChild(select);
+    }
+});
+
+        function returnac(){
+            window.location.href ="/me"
+        }
+
+        async function loadSharedBooks() {
+            const container = document.getElementById("sharedbooks-container");
+            container.innerHTML = "";
+
+            try {
+                const response = await fetch("/api/books/mysharedbooks", {
+                    method: "POST",
+                    credentials: "include"
+                });
+
+                
+                if (!response.ok) {
+                    container.innerHTML = books.message;
+                    return;
+                }
+                const data = await response.json();
+                 const books = data.message;
+                 if (books.length === 0) {
+                    container.innerHTML = '<p>No shared books found.</p>';
+                    return;
+                }
+                container.innerHTML = "";
+                
+                 books.forEach(book => {
+                        const div = document.createElement("div");
+                        div.className = "book-card";
+
+                        div.innerHTML = `
+                            <h3>${book.title} (ID: ${book.id})</h3>
+                            <p><strong>Owner ID:</strong> ${book.owner_id} | <strong>Permission:</strong> ${book.permission ?? "owner"}</p>
+                        `;
+
+                        container.appendChild(div);
+                    });
+
+            } catch (err) {
+                container.innerHTML = "Error loading shared books";
+                console.error(err);
+            }
+        }
+
+        async function doBooks(){
+            const bookId = document.getElementById('manage-book-id').value;
+            const action = document.getElementById('action-filter').value;
+            const messageEl = document.getElementById('manage-message');
+
+            if (!bookId) {
+                messageEl.textContent = "Please enter a valid Book ID";
+                messageEl.style.color = "red";
+                return;
+            }
+
+            let url = '';
+            let method = 'POST';
+            let body = null;
+
+            if (action === 'borrow') {
+                url = `/api/books/${bookId}/borrow`;
+            } else if (action === 'return') {
+                url = `/api/books/${bookId}/return`;
+            } else if (action === 'delete') {
+                url = `/api/books/${bookId}`;
+                method = 'DELETE'; 
+            } else if (action === 'share') {
+                url = `/api/books/${bookId}/share`;
+                const sharedId = document.getElementById("share-user")?.value;
+                const sharedPerm = document.getElementById("share-permission")?.value;
+
+                body = JSON.stringify({ targetUserId: sharedId, permission: sharedPerm }); 
+            }
+
+            const options = {
+                method: method,
+                credentials: 'include'
+            };
+
+            if (body) {
+                options.headers = { 'Content-Type': 'application/json' };
+                options.body = body;
+            }
+
+            try{
+                const response = await fetch(url, options);
+                const data = await response.json();
+
+                if (response.ok) {
+                    messageEl.textContent = data.message;
+                    messageEl.style.color = "green";
+                    if (typeof fetchBooks === "function") fetchBooks(); 
+                } else {
+                    messageEl.textContent = `Error (${response.status}): ${data.message || data.error}`;
+                    messageEl.style.color = "red";
+                    if (typeof fetchBooks === "function") fetchBooks(); 
+                }
+            }
+            catch(error){
+                console.error("Management action failed:", err);
+                messageEl.textContent = "Network error occurred.";
+                messageEl.style.color = "red";
+            }
+        }
+
+        async function fetchBooks() {
+            const searchTerm = document.getElementById('search-term').value;
+            const availability = document.getElementById('availability-filter').value;
+            
+            let url = '/api/books?';
+            if (searchTerm) url += `search=${encodeURIComponent(searchTerm)}&`;
+            if (availability) url += `available=${availability}`;
+
+            try {
+                const response = await fetch(url);
+                const books = await response.json();
+                
+                const container = document.getElementById('books-container');
+                container.innerHTML = ''; 
+
+                if (books.length === 0) {
+                    container.innerHTML = '<p>No books found.</p>';
+                    return;
+                }
+                books.forEach(book => {
+                    const status = book.is_available ? "🟢 Available" : "🔴 Checked Out";
+                    container.innerHTML += `
+                        <div class="book-card">
+                            <h3>${book.title} (ID: ${book.id})</h3>
+                            <p><strong>Author:</strong> ${book.author} | <strong>Year:</strong> ${book.year} | <strong>Genre:</strong> ${book.genre}</p>
+                            <p>Status: ${status}</p>
+                        </div>
+                    `;
+                });
+            } catch (err) {
+                console.error("Failed to fetch books", err);
+            }
+        }
+
+        async function addBook() {
+            const title = document.getElementById('add-title').value;
+            const author = document.getElementById('add-author').value;
+            const year = document.getElementById('add-year').value;
+            const genre = document.getElementById('add-genre').value;
+            const messageEl = document.getElementById('add-message');
+
+            if (!title || !author) {
+                messageEl.textContent = "Title and Author are required!";
+                messageEl.style.color = "red";
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/books', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json' 
+                    },
+                    body: JSON.stringify({ title, author, year, genre })
+                });
+
+                const data = await response.json();
+
+                if (response.status === 201) {
+                    messageEl.textContent = "Book added successfully!";
+                    messageEl.style.color = "green";
+                    fetchBooks(); 
+                    
+                    document.getElementById('add-title').value = '';
+                    document.getElementById('add-author').value = '';
+                    document.getElementById('add-year').value = '';
+                    document.getElementById('add-genre').value = '';
+                } else {
+                    
+                    messageEl.textContent = "Error: " + (data.error || data.message || "Failed to add");
+                    messageEl.style.color = "red";
+                }
+            } catch (err) {
+                console.error("Failed to add book", err);
+                messageEl.textContent = "Server connection failed.";
+                messageEl.style.color = "red";
+            }
+        }
+        window.onload = function () {
+            fetchBooks();
+            loadSharedBooks();
+        };
+        
+    </script>
+</body>
+</html>
