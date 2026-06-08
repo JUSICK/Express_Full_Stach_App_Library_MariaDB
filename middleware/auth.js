@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
+require('dotenv').config();
 const { GetQuery } = require('../db/database');
-const secretKey = "STITCH_IS_BEST";
+const secretKey = process.env.JWT_SECRET;
 
 const requireAuth = (req, res, next) => {
     const token = req.cookies?.jwt_token;

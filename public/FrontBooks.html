@@ -43,7 +43,7 @@
     </div>
 
     <div class="section">
-        <h2>Shared Books</h2>
+        <h2>My Books | Shared Books</h2>
         <div id="sharedbooks-container">
         </div>
     </div>
@@ -78,16 +78,19 @@
 
     document.getElementById("action-filter").addEventListener("change", function () {
     const extra = document.getElementById("extra-input");
+    const ErrorMessage = document.getElementById("manage-message");
+    ErrorMessage.textContent = "";
     extra.innerHTML = ""; 
 
     if (this.value === "share") {
         const input = document.createElement("input");
         const select = document.createElement("select");
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "Remove All Sharing";
 
-        input.type = "text";
         input.id = "share-user";
         input.type = "number";
-        input.placeholder = "Enter ID to share with";
+        input.placeholder = "Enter User ID";
 
         select.id = "share-permission";
 
@@ -102,9 +105,43 @@
         select.appendChild(optRead);
         select.appendChild(optWrite);
        
+        removeBtn.onclick = async () => {
+            const targetUserId = document.getElementById("share-user").value;
+            const bookId = document.getElementById("manage-book-id").value;
+
+            if (!targetUserId || !bookId) {
+                ErrorMessage.textContent = "Please enter both Book ID and User ID to remove permissions.";
+                ErrorMessage.style.color = "red";
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/books/${bookId}/unshare`, {
+                    method: "DELETE",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ targetUserId: targetUserId })
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    ErrorMessage.textContent = result.message;
+                    ErrorMessage.style.color = "green";
+                    if (typeof fetchBooks === "function") fetchBooks(); 
+                    loadSharedBooks();
+                } else {
+                    ErrorMessage.textContent = `Error (${response.status}): ${result.message || result.error}`;
+                    ErrorMessage.style.color = "red";
+                }
+            } catch (err) {
+                console.error(err);
+                ErrorMessage.textContent = "Network error occurred while removing permissions.";
+                ErrorMessage.style.color = "red";
+            }
+        };
 
         extra.appendChild(input);
         extra.appendChild(select);
+        extra.appendChild(removeBtn);
     }
 });
 
@@ -124,12 +161,14 @@
 
                 
                 if (!response.ok) {
-                    container.innerHTML = books.message;
+                    const errorData = await response.json();
+                    container.innerHTML = errorData.message;
                     return;
                 }
                 const data = await response.json();
-                 const books = data.message;
-                 if (books.length === 0) {
+                 const books = data.books;
+                 const userId = data.currentUserId;
+                 if (!books || books.length === 0) {
                     container.innerHTML = '<p>No shared books found.</p>';
                     return;
                 }
@@ -139,16 +178,48 @@
                         const div = document.createElement("div");
                         div.className = "book-card";
 
-                        div.innerHTML = `
+                        if (userId === book.owner_id) {
+                            div.innerHTML = `
+                                <h3>${book.title} (ID: ${book.id})</h3>
+                                <p><strong>Owner:</strong> YOU</p>
+                                ${book.shared_users && book.shared_users.length > 0
+                                    ? `
+                                        <p><strong>Shared with:</strong></p>
+                                        <ul>
+                                            ${book.shared_users
+                                                .map(u => `<li>User ${u.user_id} — ${u.permission}</li>`)
+                                                .join("")}
+                                        </ul>
+                                    `
+                                    : ""
+                                }
+                            `;
+                        }
+                        else {
+                            const myPerm = book.shared_users?.find(u => u.user_id === userId)?.permission;
+
+                            div.innerHTML = `
                             <h3>${book.title} (ID: ${book.id})</h3>
-                            <p><strong>Owner ID:</strong> ${book.owner_id} | <strong>Permission:</strong> ${book.permission ?? "owner"}</p>
+                            <p><strong>Owner ID:</strong> ${book.owner_id} 
+                            <strong>Your current permission:</strong></p>
+                            <ul>
+                                ${book.shared_users
+                                    .map(u => 
+                                        u.user_id === userId 
+                                            ? `<li>${u.permission}</li>` 
+                                            : `<li>None</li>`
+                                    )
+                                    .join("")
+                                }
+                            </ul>
                         `;
+                        }
 
                         container.appendChild(div);
                     });
 
             } catch (err) {
-                container.innerHTML = "Error loading shared books";
+                container.innerHTML = "<p>Error loading shared books.</p>";
                 console.error(err);
             }
         }
@@ -201,10 +272,12 @@
                     messageEl.textContent = data.message;
                     messageEl.style.color = "green";
                     if (typeof fetchBooks === "function") fetchBooks(); 
+                    loadSharedBooks();
                 } else {
                     messageEl.textContent = `Error (${response.status}): ${data.message || data.error}`;
                     messageEl.style.color = "red";
                     if (typeof fetchBooks === "function") fetchBooks(); 
+                    loadSharedBooks();
                 }
             }
             catch(error){
@@ -276,7 +349,7 @@
                     messageEl.textContent = "Book added successfully!";
                     messageEl.style.color = "green";
                     fetchBooks(); 
-                    
+                    loadSharedBooks();
                     document.getElementById('add-title').value = '';
                     document.getElementById('add-author').value = '';
                     document.getElementById('add-year').value = '';
@@ -285,6 +358,8 @@
                     
                     messageEl.textContent = "Error: " + (data.error || data.message || "Failed to add");
                     messageEl.style.color = "red";
+                    fetchBooks();
+                    loadSharedBooks();
                 }
             } catch (err) {
                 console.error("Failed to add book", err);

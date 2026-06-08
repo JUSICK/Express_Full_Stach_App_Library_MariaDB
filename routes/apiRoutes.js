@@ -1,9 +1,12 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+require('dotenv').config();
 const router = express.Router();
 const { GetQuery } = require('../db/database');
-const { requireAuth, requireRole, secretKey } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
+
+const secretKey = process.env.JWT_SECRET;
 
 router.get('/books', async (req, res) => {
   const { search, available } = req.query;
@@ -108,19 +111,50 @@ router.post('/books/:id/share', requireAuth, async (req, res) => {
 
     try {
         const books = await GetQuery('SELECT owner_id FROM books WHERE id = ?', [bookId]);
+        const user = await GetQuery('SELECT * FROM users WHERE id = ?', [targetUserId]);
         
         if (books.length === 0) return res.status(404).json({ message: "Book not found" });
+        if (user.length === 0) return res.status(404).json({ message: "Target user not found" });
         if (books[0].owner_id !== ownerId) {
           GetQuery('INSERT INTO logs (log, status, ip) VALUES (?, ?, ?)', ["Only the owner can share this book", 403, req.ip]);
           return res.status(403).json({ message: "Only the owner can share this book" });
         }
 
         await GetQuery(
-            'INSERT INTO book_acl (book_id, user_id, permission) VALUES (?, ?, ?)',
+            `INSERT INTO book_acl (book_id, user_id, permission)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE permission = permission`,
             [bookId, targetUserId, permission]
         );
 
-        res.json({ message: `Permission '${permission}' granted to user ${targetUserId}` });
+        res.json({ message: `Permission '${permission}' granted to user ${user[0].username} (${targetUserId})` });
+
+    } catch (err) {
+        res.status(500).json({ message: "Database error", error: err.message });
+    }
+});
+
+router.delete('/books/:id/unshare', requireAuth, async (req, res) => {
+    const ownerId = req.user.id;
+    const bookId = req.params.id;
+    const { targetUserId } = req.body;
+
+    try {
+        const books = await GetQuery('SELECT owner_id FROM books WHERE id = ?', [bookId]);
+
+        if (books.length === 0) return res.status(404).json({ message: "Book not found" });
+        if (books[0].owner_id !== ownerId) {
+            GetQuery('INSERT INTO logs (log, status, ip) VALUES (?, ?, ?)', ["Only the owner can unshare this book", 403, req.ip]);
+            return res.status(403).json({ message: "Only the owner can unshare this book" });
+        }
+        if(!targetUserId || isNaN(targetUserId)) {
+            return res.status(400).json({ message: "Valid targetUserId is required" });
+        }
+        const result = await GetQuery('DELETE FROM book_acl WHERE book_id = ? AND user_id = ?', [bookId, targetUserId]);
+        if(result.affectedRows === 0) {
+            return res.status(404).json({ message: "Permission entry not found for this user and book" });
+        }
+        res.json({ message: `Permission removed for user ${targetUserId}` });
 
     } catch (err) {
         res.status(500).json({ message: "Database error", error: err.message });
@@ -131,18 +165,47 @@ router.post('/books/mysharedbooks', requireAuth, async (req, res) => {
     const userId = req.user.id;
 
     try {
-        const books = await GetQuery(
-            `SELECT b.*, a.permission
-             FROM books b
-             LEFT JOIN book_acl a ON b.id = a.book_id
-             WHERE b.owner_id = ?
-                OR a.user_id = ?`,
+        const rawBooks = await GetQuery(
+            `SELECT 
+              b.id,
+              b.title,
+              b.owner_id,
+              a.user_id AS shared_user_id,
+              a.permission
+          FROM books b
+          LEFT JOIN book_acl a ON b.id = a.book_id
+          WHERE b.owner_id = ?
+            OR a.user_id = ?;
+          `,
             [userId, userId]
         );
-        
-        if (books.length === 0) return res.status(404).json({ message: "No Books" });
 
-        res.json({ message: books });
+        if (rawBooks.length === 0) return res.status(404).json({ message: "No Books" });
+
+        const books = {};
+
+        for (const row of rawBooks) {
+            if (!books[row.id]) {
+                books[row.id] = {
+                    id: row.id,
+                    title: row.title,
+                    owner_id: row.owner_id,
+                    shared_users: []
+                };
+            }
+
+            if (row.shared_user_id) {
+                books[row.id].shared_users.push({
+                    user_id: row.shared_user_id,
+                    permission: row.permission
+                });
+            }
+        }
+
+        res.json({
+            currentUserId: userId,
+            books: Object.values(books)
+        });
 
     } catch (err) {
         res.status(500).json({ message: "Database error", error: err.message });
@@ -162,11 +225,11 @@ router.post('/books/:id/return', requireAuth, async (req, res) => {
     }
 
     if(books[0].holder_user_id !== userId && (userRole !== 'admin' && userRole !== 'editor')){
-      GetQuery('INSERT INTO logs (log, status, ip) VALUES (?, ?, ?)', ["User doesn't have a permission to return a book - holder_user_id !== userId", 403, req.ip]);
+      await GetQuery('INSERT INTO logs (log, status, ip) VALUES (?, ?, ?)', ["User doesn't have a permission to return a book - holder_user_id !== userId", 403, req.ip]);
       return res.status(403).json({ message: 'Forbidden: You cannot return a book checked out by someone else' });
     }
 
-    GetQuery(
+    await GetQuery(
       'UPDATE books SET is_available = TRUE, holder_user_id = NULL WHERE id = ?',
       [bookId]
     );
@@ -196,20 +259,25 @@ router.get('/admin/logs', requireAuth, requireRole('admin'), async (req, res) =>
       res.status(500).json({ message: 'Database error', error: err.message });
     }
 
-    res.json(users);
+    res.json(logs);
 });
 
 router.get('/me', requireAuth, async (req, res) => {
-  if(req.user){
-    return res.json({
-      message: "Welcome!",
-      yourDetails: req.user
-    });
+  try{
+      if(req.user){
+      return res.json({
+        message: "Welcome!",
+        yourDetails: req.user
+      });
+    }
+    else{
+      GetQuery('INSERT INTO logs (log, status, ip) VALUES (?, ?, ?)', ["/me 403", 401, req.ip]);
+      return res.status(401);
+    }api/books
+  }catch(err){
+    res.status(500).json({ message: 'Database error', error: err.message });
   }
-  else{
-    GetQuery('INSERT INTO logs (log, status, ip) VALUES (?, ?, ?)', ["/me 403", 401, req.ip]);
-    return res.status(401);
-  }
+  
     
 });
 
@@ -278,14 +346,14 @@ router.post('/user/changepassword', requireAuth, async (req, res) => {
 
         const isMatch = await bcrypt.compare(currentPassword, currentHashedPassword);
         if (!isMatch) {
-            GetQuery('INSERT INTO logs (log, status, ip) VALUES (?, ?, ?)', ["Password is incorrect during a password change", 401, req.ip]);
+            await GetQuery('INSERT INTO logs (log, status, ip) VALUES (?, ?, ?)', ["Password is incorrect during a password change", 401, req.ip]);
             return res.status(401).json({ message: "Incorrect current password" });
         }
 
         const saltRounds = 10;
         const newHashedPassword = await bcrypt.hash(newPassword, saltRounds);
 
-        GetQuery('UPDATE users SET password_hash = ? WHERE id = ?', [newHashedPassword, userId]);
+        await GetQuery('UPDATE users SET password_hash = ? WHERE id = ?', [newHashedPassword, userId]);
 
         res.json({ message: "Password updated successfully" });
 
@@ -302,6 +370,12 @@ router.post('/register', async (req, res) => {
     }
 
     try{
+
+      const sameUser = await GetQuery("SELECT * FROM users WHERE email = ?", [email]);
+
+      if(sameUser.length > 0){
+        return res.status(409).json({ message: "Email is already taken" });
+      }
 
       const saltRounds = 10;
       const hashedPassword = await bcrypt.hash(password, saltRounds);

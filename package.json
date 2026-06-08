@@ -1,23 +1,30 @@
 {
   "name": "lab10",
   "version": "1.0.0",
-  "description": "lab 10 praca",
+  "description": "express.js app with authentication and authorization",
   "license": "MIT",
   "author": "Illia Kuchuhurnyi",
   "type": "commonjs",
   "main": "app.js",
   "scripts": {
-    "test": "jest"
+    "start": "node server.js",
+    "test": "jest",
+    "db:create": "npx dbmate create",
+    "db:up": "npx dbmate up",
+    "db:down": "npx dbmate down",
+    "db:seed": "node db/seed.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "mariadb": "^3.5.2"
   },
   "devDependencies": {
+    "dbmate": "^2.33.0",
     "jest": "^30.4.2",
     "supertest": "^7.2.2"
   }
