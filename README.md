@@ -65,3 +65,6 @@ npm run dev
 ```bash
 npm test
 ```
+
+<img width="1286" height="997" alt="Screenshot 2026-06-08 163938" src="https://github.com/user-attachments/assets/cd0f8799-7864-40a7-a606-0c3e1a0d6046" />
+
