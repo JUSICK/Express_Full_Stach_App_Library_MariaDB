@@ -35,7 +35,7 @@ beforeAll(() => {
         email: "test@admin.com"
     };
 
-    const secret = process.env.JWT_SECRET || "secretKey";
+    const secret = process.env.JWT_SECRET;
 token = jwt.sign(testPayload, secret, { expiresIn: '1h' });
     
     Cookie = `jwt_token=${token}; HttpOnly; SameSite=Strict`;
